@@ -72,7 +72,7 @@ const (
 	DaemonReload      = "systemctl daemon-reload"
 	RestartKubeletSvc = "systemctl restart kubelet"
 
-	CniURLFormat                    = "https://aliacs-edge-k8s-cn-hangzhou.oss-cn-hangzhou.aliyuncs.com/public/pkg/openyurt/cni/%s/cni-plugins-linux-%s-%s.tgz"
+	CniURLFormat                    = "https://github.com/containernetworking/plugins/releases/download/%s/cni-plugins-linux-%s-%s.tgz"
 	DefaultKubernetesResourceServer = "dl.k8s.io"
 	KubeadmURLFormat                = "https://%s/release/%s/bin/linux/%s/kubeadm"
 	KubeletURLFormat                = "https://%s/release/%s/bin/linux/%s/kubelet"
