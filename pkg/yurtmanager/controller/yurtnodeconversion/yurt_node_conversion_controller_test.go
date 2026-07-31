@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -125,10 +126,45 @@ func TestReconcileConvertFailure(t *testing.T) {
 	assert.Equal(t, "convert failed", cond.Message)
 }
 
-func TestReconcileRecreateConvertJobAfterFailedConditionWhenJobMissing(t *testing.T) {
+// TestReconcileKeepsFailedConvertResultWhenJobMissing pins that a failed conversion is NOT retried
+// once its Job has gone away. The Job carries ttlSecondsAfterFinished, so Kubernetes deletes it
+// even when it failed; retrying on that delete event re-cordons the node and restarts kubelet on
+// every TTL period, forever and unattended. The failure is recorded on the node condition, which
+// outlives the Job, and an operator clears it to retry.
+func TestReconcileKeepsFailedConvertResultWhenJobMissing(t *testing.T) {
 	node := newNode("node-a", map[string]string{
 		projectinfo.GetNodePoolLabel(): "pool-a",
 	}, false, newNodeCondition(reasonConvertFailed, corev1.ConditionTrue))
+
+	r, cli := newReconcilerForTest(t, node, newEdgeNodePool("pool-a"))
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "node-a"}})
+	require.NoError(t, err)
+
+	updatedNode := &corev1.Node{}
+	require.NoError(t, cli.Get(context.Background(), types.NamespacedName{Name: "node-a"}, updatedNode))
+
+	// The terminal failure is preserved rather than overwritten with Converting.
+	cond := getConversionCondition(updatedNode)
+	require.NotNil(t, cond)
+	assert.Equal(t, corev1.ConditionTrue, cond.Status)
+	assert.Equal(t, reasonConvertFailed, cond.Reason)
+
+	// And no replacement Job is created.
+	job := &batchv1.Job{}
+	err = cli.Get(context.Background(), types.NamespacedName{
+		Namespace: r.conversionJobNamespace(),
+		Name:      conversionJobName("node-a"),
+	}, job)
+	assert.True(t, apierrors.IsNotFound(err), "expected no conversion job to be recreated, got %v", err)
+}
+
+// TestReconcileRetriesConvertAfterFailedConditionCleared is the counterpart: clearing the condition
+// is the documented way to ask for another attempt.
+func TestReconcileRetriesConvertAfterFailedConditionCleared(t *testing.T) {
+	node := newNode("node-a", map[string]string{
+		projectinfo.GetNodePoolLabel(): "pool-a",
+	}, false, nil)
 
 	r, cli := newReconcilerForTest(t, node, newEdgeNodePool("pool-a"))
 

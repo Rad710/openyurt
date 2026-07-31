@@ -171,6 +171,18 @@ func (r *ReconcileYurtNodeConversion) Reconcile(ctx context.Context, req reconci
 		return reconcile.Result{}, nil
 	}
 
+	// The Job is the only record that a round ran, so once it is gone the labels still ask for
+	// the same action and a new round would start. The node condition is the durable record of a
+	// terminal failure, so honour it: a failed round is not retried until an operator clears the
+	// condition. Without this the Job's ttlSecondsAfterFinished deletes the failed Job, the delete
+	// event schedules a reconcile, and the node is re-cordoned and kubelet restarted on every TTL
+	// period, indefinitely and unattended.
+	if hasFailedConditionForAction(cond, desiredAction) {
+		klog.V(2).Info(Format("node(%s) keeps the failed %s result, not starting a new round. "+
+			"Clear the %s node condition to retry", node.Name, desiredAction, conversionConditionType))
+		return reconcile.Result{}, nil
+	}
+
 	// Stage 4: start a new convert/revert round from labels
 	return r.startNewConversionRound(ctx, node.Name, nodePoolName, desiredAction)
 }
@@ -680,6 +692,23 @@ func hasSucceededConditionForAction(cond *corev1.NodeCondition, action string) b
 		return cond.Reason == reasonConverted
 	case actionRevert:
 		return cond.Reason == reasonReverted
+	default:
+		return false
+	}
+}
+
+// hasFailedConditionForAction reports whether the node already records a terminal failure for
+// action. Terminal failures are stored with ConditionTrue, see newConversionCondition.
+func hasFailedConditionForAction(cond *corev1.NodeCondition, action string) bool {
+	if cond == nil || cond.Status != corev1.ConditionTrue {
+		return false
+	}
+
+	switch action {
+	case actionConvert:
+		return cond.Reason == reasonConvertFailed
+	case actionRevert:
+		return cond.Reason == reasonRevertFailed
 	default:
 		return false
 	}
