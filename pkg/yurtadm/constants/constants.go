@@ -300,11 +300,17 @@ spec:
 	YurtHubServiceContent = `[Unit]
 Description=YurtHub Service
 After=network.target
+Before=kubelet.service
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/yurthub
 Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 `
 	YurthubSyetmdServiceContent = `
 [Unit]
