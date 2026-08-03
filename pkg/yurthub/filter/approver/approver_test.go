@@ -31,6 +31,7 @@ import (
 	"github.com/openyurtio/openyurt/pkg/yurthub/configuration"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/discardcloudservice"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/forwardkubesvctraffic"
+	"github.com/openyurtio/openyurt/pkg/yurthub/filter/livepodip"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/masterservice"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/nodeportisolation"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/servicetopology"
@@ -91,7 +92,7 @@ func TestApprove(t *testing.T) {
 			verb:         "GET",
 			path:         "/apis/discovery.k8s.io/v1/endpointslices",
 			approved:     true,
-			resultFilter: []string{servicetopology.FilterName, forwardkubesvctraffic.FilterName},
+			resultFilter: []string{servicetopology.FilterName, forwardkubesvctraffic.FilterName, livepodip.FilterName},
 			workingMode:  util2.WorkingModeEdge,
 		},
 		"kube-proxy watch endpointslices": {
@@ -99,7 +100,7 @@ func TestApprove(t *testing.T) {
 			verb:         "GET",
 			path:         "/apis/discovery.k8s.io/v1/endpointslices?watch=true",
 			approved:     true,
-			resultFilter: []string{servicetopology.FilterName, forwardkubesvctraffic.FilterName},
+			resultFilter: []string{servicetopology.FilterName, forwardkubesvctraffic.FilterName, livepodip.FilterName},
 			workingMode:  util2.WorkingModeEdge,
 		},
 		"nginx-ingress-controller list endpoints": {

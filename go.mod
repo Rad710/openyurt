@@ -32,6 +32,7 @@ require (
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/net v0.56.0
 	golang.org/x/oauth2 v0.34.0
+	golang.org/x/sync v0.21.0
 	golang.org/x/sys v0.46.0
 	google.golang.org/grpc v1.79.3
 	gopkg.in/cheggaaa/pb.v1 v1.0.28
@@ -46,6 +47,8 @@ require (
 	k8s.io/component-base v0.34.0
 	k8s.io/component-helpers v0.34.0
 	k8s.io/controller-manager v0.34.0
+	k8s.io/cri-api v0.34.0
+	k8s.io/cri-client v0.34.0
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kube-controller-manager v0.34.0
 	k8s.io/kubectl v0.34.0
@@ -76,6 +79,7 @@ require (
 	cyphar.com/go-pathrs v0.2.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20230124172434-306776ec8161 // indirect
 	github.com/Masterminds/semver/v3 v3.4.0 // indirect
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/NYTimes/gziphandler v1.1.1 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -155,7 +159,6 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
 	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/term v0.44.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.9.0 // indirect

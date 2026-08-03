@@ -54,6 +54,7 @@ import (
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/initializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/manager"
+	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/cri"
 	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/meta"
 	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/serializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/network"
@@ -99,6 +100,10 @@ type YurtHubConfiguration struct {
 	PoolScopeResources              []schema.GroupVersionResource
 	PortForMultiplexer              int
 	NodePoolName                    string
+	// PodIPSource reads the addresses pods currently have on this node from the
+	// container runtime. Nil outside the edge working mode, or if the runtime
+	// endpoint could not be parsed. Held here so it can be closed on shutdown.
+	PodIPSource cri.Source
 }
 
 // Complete converts *options.YurtHubOptions to *YurtHubConfiguration
@@ -218,6 +223,25 @@ func Complete(options *options.YurtHubOptions, stopCh <-chan struct{}) (*YurtHub
 		// - network manager: ensuring a dummy interface in order to serve tls requests on the node.
 		// - others: prepare server servings.
 		configManager := configuration.NewConfigurationManager(options.NodeName, sharedFactory)
+
+		// Pod-IP source for the livepodip filter. Edge working mode only: it
+		// reads this node's own container runtime, which a cloud-mode yurthub
+		// has no reason to do. cri.NewSource dials lazily, so this does not
+		// block on containerd being up yet, and a failure here is not fatal —
+		// the filter is written to stay inactive with a nil source rather than
+		// prevent yurthub from starting, because serving stale addresses is
+		// strictly better than not serving at all.
+		var podIPSource cri.Source
+		if cfg.WorkingMode == util.WorkingModeEdge {
+			podIPSource, err = cri.NewSource(options.CRIRuntimeEndpoint, cri.DefaultCacheTTL)
+			if err != nil {
+				klog.Errorf("could not create pod IP source from CRI endpoint %s, EndpointSlices will be served with cached addresses while disconnected: %v", options.CRIRuntimeEndpoint, err)
+				podIPSource = nil
+			} else {
+				cfg.PodIPSource = podIPSource
+			}
+		}
+
 		filterFinder, err := manager.NewFilterManager(
 			options,
 			sharedFactory,
@@ -225,6 +249,7 @@ func Complete(options *options.YurtHubOptions, stopCh <-chan struct{}) (*YurtHub
 			proxiedClient,
 			cfg.SerializerManager,
 			configManager,
+			podIPSource,
 		)
 		if err != nil {
 			klog.Errorf("could not create filter manager, %v", err)

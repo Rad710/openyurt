@@ -32,6 +32,7 @@ import (
 
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/certificate"
+	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/cri"
 	"github.com/openyurtio/openyurt/pkg/yurthub/storage/disk"
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
@@ -76,6 +77,7 @@ type YurtHubOptions struct {
 	DiskCachePath             string
 	EnableResourceFilter      bool
 	DisabledResourceFilters   []string
+	CRIRuntimeEndpoint        string
 	WorkingMode               string
 	KubeletHealthGracePeriod  time.Duration
 	EnableNodePool            bool
@@ -116,6 +118,7 @@ func NewYurtHubOptions() *YurtHubOptions {
 		DiskCachePath:             disk.CacheBaseDir,
 		EnableResourceFilter:      true,
 		DisabledResourceFilters:   make([]string, 0),
+		CRIRuntimeEndpoint:        cri.DefaultRuntimeEndpoint,
 		WorkingMode:               string(util.WorkingModeEdge),
 		KubeletHealthGracePeriod:  time.Second * 40,
 		EnableNodePool:            true,
@@ -226,6 +229,7 @@ func (o *YurtHubOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.DiskCachePath, "disk-cache-path", o.DiskCachePath, "the path for kubernetes to storage metadata")
 	fs.BoolVar(&o.EnableResourceFilter, "enable-resource-filter", o.EnableResourceFilter, "enable to filter response that comes back from reverse proxy")
 	fs.StringSliceVar(&o.DisabledResourceFilters, "disabled-resource-filters", o.DisabledResourceFilters, "disable resource filters to handle response")
+	fs.StringVar(&o.CRIRuntimeEndpoint, "cri-runtime-endpoint", o.CRIRuntimeEndpoint, "the endpoint of the container runtime service, used to read the addresses pods currently have on this node so EndpointSlices can be served with live addresses while the cloud is unreachable")
 	fs.StringVar(&o.NodePoolName, "nodepool-name", o.NodePoolName, "the name of node pool that runs hub agent")
 	fs.StringVar(&o.WorkingMode, "working-mode", o.WorkingMode, "the working mode of yurthub(edge, cloud, local).")
 	fs.DurationVar(&o.KubeletHealthGracePeriod, "kubelet-health-grace-period", o.KubeletHealthGracePeriod, "the amount of time which we allow kubelet to be unresponsive before stop renew node lease")

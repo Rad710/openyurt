@@ -45,7 +45,7 @@ func TestNew(t *testing.T) {
 	masterServiceHost := "127.0.0.1"
 	masterServicePort := "8080"
 
-	obj := New(sharedFactory, fakeClient, nodeName, nodePoolName, masterServiceHost, masterServicePort)
+	obj := New(sharedFactory, fakeClient, nodeName, nodePoolName, masterServiceHost, masterServicePort, nil)
 	_, ok := interface{}(obj).(filter.Initializer)
 	if !ok {
 		t.Errorf("expect a filter Initializer object, but got %v", reflect.TypeOf(obj))
@@ -110,7 +110,7 @@ func TestInitialize(t *testing.T) {
 	masterServiceHost := "127.0.0.1"
 	masterServicePort := "8080"
 
-	obj := New(sharedFactory, fakeClient, nodeName, nodePoolName, masterServiceHost, masterServicePort)
+	obj := New(sharedFactory, fakeClient, nodeName, nodePoolName, masterServiceHost, masterServicePort, nil)
 
 	for k, tc := range testcases {
 		t.Run(k, func(t *testing.T) {

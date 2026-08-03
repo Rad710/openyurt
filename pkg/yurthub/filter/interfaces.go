@@ -22,6 +22,8 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
 )
 
 type NodesInPoolGetter func(poolName string) ([]string, error)
@@ -59,6 +61,16 @@ type FilterFinder interface {
 	FindResponseFilter(req *http.Request) (ResponseFilter, bool)
 	FindObjectFilter(req *http.Request) (ObjectFilter, bool)
 	ResourceSyncer
+
+	// SetHealthChecker attaches the cloud health checker to every constructed
+	// filter that asks for one (initializer.WantsHealthChecker). It exists as
+	// a separate, later call rather than going through the normal
+	// filter.Initializer chain because the checker is not constructed until
+	// after every filter already is: FilterFinder is built by
+	// config.Complete(), while the cloud health checker is only built
+	// afterwards, in cmd/yurthub/app/start.go, once cache-manager state it
+	// depends on exists. Safe to call with a nil checker (no-op).
+	SetHealthChecker(checker healthchecker.Interface) error
 }
 
 type NodeGetter func(name string) (*v1.Node, error)

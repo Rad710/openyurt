@@ -2613,6 +2613,7 @@ func TestResponseFilterForListRequest(t *testing.T) {
 				tc.poolName,
 				tc.masterHost,
 				tc.masterPort,
+				nil,
 			)
 			initializerChain := base.Initializers{}
 			initializerChain = append(initializerChain, genericInitializer, nodesInitializer)

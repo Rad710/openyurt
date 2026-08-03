@@ -21,6 +21,7 @@ import (
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/discardcloudservice"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/forwardkubesvctraffic"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/inclusterconfig"
+	"github.com/openyurtio/openyurt/pkg/yurthub/filter/livepodip"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/masterservice"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/nodeportisolation"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/serviceenvupdater"
@@ -29,7 +30,9 @@ import (
 
 var (
 	// DisabledInCloudMode contains the filters that should be disabled when yurthub is working in cloud mode.
-	DisabledInCloudMode = []string{discardcloudservice.FilterName, forwardkubesvctraffic.FilterName, serviceenvupdater.FilterName}
+	// livepodip is edge-only by nature: it reads this node's container runtime, and a cloud-mode
+	// yurthub has neither a reason nor (necessarily) a runtime socket to read.
+	DisabledInCloudMode = []string{discardcloudservice.FilterName, forwardkubesvctraffic.FilterName, serviceenvupdater.FilterName, livepodip.FilterName}
 
 	// FilterToComponentsResourcesAndVerbs is used to specify which request with resource and verb from component is supported by the filter.
 	// When adding a new filter, It is essential to update the FilterToComponentsResourcesAndVerbs map
@@ -81,6 +84,17 @@ var (
 				"pods": {"list", "watch", "get", "patch"},
 			},
 		},
+		livepodip.FilterName: {
+			// The consumers that program traffic from EndpointSlices. Traefik
+			// (or any other ingress controller) is not listed here because its
+			// user-agent is deployment-specific; add it through the
+			// yurt-hub-cfg ConfigMap, which unions components on top of these
+			// defaults, rather than hardcoding one site's ingress here.
+			DefaultComponents: []string{"kube-proxy", "coredns"},
+			ResourceAndVerbs: map[string][]string{
+				"endpointslices": {"list", "watch"},
+			},
+		},
 	}
 )
 
@@ -96,4 +110,5 @@ func RegisterAllFilters(filters *base.Filters) {
 	nodeportisolation.Register(filters)
 	forwardkubesvctraffic.Register(filters)
 	serviceenvupdater.Register(filters)
+	livepodip.Register(filters)
 }

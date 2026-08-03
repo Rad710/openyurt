@@ -21,6 +21,8 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
+	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/cri"
 )
 
 // WantsSharedInformerFactory is an interface for setting SharedInformerFactory
@@ -49,6 +51,30 @@ type WantsKubeClient interface {
 	SetKubeClient(client kubernetes.Interface) error
 }
 
+// WantsHealthChecker is an interface for setting the cloud health checker, so
+// a filter can ask whether the cloud is currently reachable and, per
+// decisions/0002, change its behaviour only while disconnected. Unlike the
+// other Wants* interfaces here, it is NOT invoked by
+// genericFilterInitializer.Initialize — the checker does not exist yet at
+// filter-construction time (see filter.FilterFinder.SetHealthChecker for why)
+// — so a filter implementing this must tolerate SetHealthChecker being called
+// once, later, after construction, and must tolerate IsHealthy() never having
+// been askable at all if the checker is nil (working modes other than Edge
+// never attach one).
+type WantsHealthChecker interface {
+	SetHealthChecker(checker healthchecker.Interface) error
+}
+
+// WantsPodIPSource is an interface for setting the container-runtime pod-IP
+// source, so a filter can learn what address a pod on this node actually has
+// right now rather than what the cache last recorded. Unlike
+// WantsHealthChecker above, this one IS injected through the normal
+// Initialize chain: cri.NewSource dials lazily, so it can be constructed in
+// config.Complete() alongside every other filter dependency. May be nil.
+type WantsPodIPSource interface {
+	SetPodIPSource(source cri.Source) error
+}
+
 // genericFilterInitializer is responsible for initializing generic filter
 type genericFilterInitializer struct {
 	factory           informers.SharedInformerFactory
@@ -57,10 +83,12 @@ type genericFilterInitializer struct {
 	masterServiceHost string
 	masterServicePort string
 	client            kubernetes.Interface
+	podIPSource       cri.Source
 }
 
-// New creates an filterInitializer object
-func New(factory informers.SharedInformerFactory, kubeClient kubernetes.Interface, nodeName, nodePoolName, masterServiceHost, masterServicePort string) filter.Initializer {
+// New creates an filterInitializer object. podIPSource may be nil — only the
+// edge working mode with a reachable container runtime has one.
+func New(factory informers.SharedInformerFactory, kubeClient kubernetes.Interface, nodeName, nodePoolName, masterServiceHost, masterServicePort string, podIPSource cri.Source) filter.Initializer {
 	return &genericFilterInitializer{
 		factory:           factory,
 		nodeName:          nodeName,
@@ -68,6 +96,7 @@ func New(factory informers.SharedInformerFactory, kubeClient kubernetes.Interfac
 		masterServiceHost: masterServiceHost,
 		masterServicePort: masterServicePort,
 		client:            kubeClient,
+		podIPSource:       podIPSource,
 	}
 }
 
@@ -103,6 +132,12 @@ func (fi *genericFilterInitializer) Initialize(ins filter.ObjectFilter) error {
 
 	if wants, ok := ins.(WantsKubeClient); ok {
 		if err := wants.SetKubeClient(fi.client); err != nil {
+			return err
+		}
+	}
+
+	if wants, ok := ins.(WantsPodIPSource); ok {
+		if err := wants.SetPodIPSource(fi.podIPSource); err != nil {
 			return err
 		}
 	}

@@ -17,6 +17,7 @@ limitations under the License.
 package manager
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -33,6 +34,8 @@ import (
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/initializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/objectfilter"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/responsefilter"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
+	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/cri"
 	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/serializer"
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
@@ -49,7 +52,8 @@ func NewFilterManager(options *yurtoptions.YurtHubOptions,
 	dynamicSharedFactory dynamicinformer.DynamicSharedInformerFactory,
 	proxiedClient kubernetes.Interface,
 	serializerManager *serializer.SerializerManager,
-	configManager *configuration.Manager) (filter.FilterFinder, error) {
+	configManager *configuration.Manager,
+	podIPSource cri.Source) (filter.FilterFinder, error) {
 	var err error
 	nameToFilters := make(map[string]filter.ObjectFilter)
 	if options.EnableResourceFilter {
@@ -68,7 +72,7 @@ func NewFilterManager(options *yurtoptions.YurtHubOptions,
 		if options.EnableDummyIf {
 			mutatedMasterServiceHost = options.HubAgentDummyIfIP
 		}
-		genericInitializer := initializer.New(sharedFactory, proxiedClient, options.NodeName, options.NodePoolName, mutatedMasterServiceHost, mutatedMasterServicePort)
+		genericInitializer := initializer.New(sharedFactory, proxiedClient, options.NodeName, options.NodePoolName, mutatedMasterServiceHost, mutatedMasterServicePort, podIPSource)
 		nodesInitializer := initializer.NewNodesInitializer(options.EnableNodePool, options.EnablePoolServiceTopology, dynamicSharedFactory)
 		initializerChain := base.Initializers{}
 		initializerChain = append(initializerChain, genericInitializer, nodesInitializer)
@@ -96,6 +100,24 @@ func NewFilterManager(options *yurtoptions.YurtHubOptions,
 		serializerManager:  serializerManager,
 		resourceSyncers:    resourceSyncers,
 	}, nil
+}
+
+// SetHealthChecker attaches checker to every constructed filter that asks for
+// one via initializer.WantsHealthChecker. See filter.FilterFinder for why
+// this is a separate, later call rather than part of filter construction. A
+// nil checker is a valid no-op: working modes other than Edge never have one.
+func (m *Manager) SetHealthChecker(checker healthchecker.Interface) error {
+	if checker == nil {
+		return nil
+	}
+	for name, objFilter := range m.nameToObjectFilter {
+		if wants, ok := objFilter.(initializer.WantsHealthChecker); ok {
+			if err := wants.SetHealthChecker(checker); err != nil {
+				return fmt.Errorf("filter %s: set health checker: %w", name, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (m *Manager) HasSynced() bool {

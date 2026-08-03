@@ -30,6 +30,7 @@ import (
 
 	"github.com/openyurtio/openyurt/pkg/yurthub/cachemanager"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
 	hubutil "github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
 
@@ -86,6 +87,10 @@ func (m *mockFilterFinder) FindObjectFilter(req *http.Request) (filter.ObjectFil
 
 func (m *mockFilterFinder) HasSynced() bool {
 	return true
+}
+
+func (m *mockFilterFinder) SetHealthChecker(checker healthchecker.Interface) error {
+	return nil
 }
 
 type mockResponseFilter struct {

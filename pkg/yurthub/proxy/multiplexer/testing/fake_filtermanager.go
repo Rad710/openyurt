@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter"
+	"github.com/openyurtio/openyurt/pkg/yurthub/healthchecker"
 )
 
 type EmptyFilterManager struct {
@@ -35,6 +36,10 @@ func (fm *EmptyFilterManager) FindObjectFilter(req *http.Request) (filter.Object
 
 func (fm *EmptyFilterManager) HasSynced() bool {
 	return true
+}
+
+func (fm *EmptyFilterManager) SetHealthChecker(checker healthchecker.Interface) error {
+	return nil
 }
 
 type FakeEndpointSliceFilter struct {
@@ -53,4 +58,8 @@ func (fm *FakeEndpointSliceFilter) FindObjectFilter(req *http.Request) (filter.O
 
 func (fm *FakeEndpointSliceFilter) HasSynced() bool {
 	return true
+}
+
+func (fm *FakeEndpointSliceFilter) SetHealthChecker(checker healthchecker.Interface) error {
+	return nil
 }

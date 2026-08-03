@@ -152,6 +152,18 @@ func (m *MultiplexerManager) updateLeaderHubConfiguration(cm *corev1.ConfigMap) 
 		}
 	}
 
+	// This set REPLACES the current one rather than merging into it, so a
+	// missing, empty or malformed key silently takes every pool-scope resource
+	// off the multiplexer path — and with them every response filter bound to
+	// those resources, because the plain disk-replay path applies no filters at
+	// all. Nothing else in the system reports that, so it has to be said here:
+	// the observable symptom is a node that quietly reverts to serving
+	// unfiltered cached data.
+	if newPoolScopeMetadata.Len() == 0 {
+		klog.Errorf("multiplexer: configmap %s/%s key %q is empty or malformed, so NO pool scope metadata will be multiplexed and any response filter bound to those resources will stop running",
+			cm.Namespace, cm.Name, PoolScopeMetadataKey)
+	}
+
 	newLeaderNames := sets.New[string]()
 	newLeaderAddresses := sets.New[string]()
 	if len(cm.Data[LeaderEndpointsKey]) != 0 {
@@ -187,6 +199,10 @@ func (m *MultiplexerManager) updateLeaderHubConfiguration(cm *corev1.ConfigMap) 
 
 	// if pool scope metadata are removed, related GVR cache should be destroyed.
 	deletedPoolScopeMetadata := m.poolScopeMetadata.Difference(newPoolScopeMetadata)
+	if deletedPoolScopeMetadata.Len() != 0 {
+		klog.Warningf("multiplexer: pool scope metadata %v removed by configmap %s/%s; these resources leave the multiplexer path, so any response filter bound to them stops running",
+			deletedPoolScopeMetadata.UnsortedList(), cm.Namespace, cm.Name)
+	}
 
 	m.Lock()
 	defer m.Unlock()

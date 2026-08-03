@@ -27,6 +27,7 @@ import (
 
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/certificate"
+	"github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/cri"
 	"github.com/openyurtio/openyurt/pkg/yurthub/storage/disk"
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
@@ -57,6 +58,7 @@ func TestNewYurtHubOptions(t *testing.T) {
 		DiskCachePath:             disk.CacheBaseDir,
 		EnableResourceFilter:      true,
 		DisabledResourceFilters:   make([]string, 0),
+		CRIRuntimeEndpoint:        cri.DefaultRuntimeEndpoint,
 		WorkingMode:               string(util.WorkingModeEdge),
 		KubeletHealthGracePeriod:  time.Second * 40,
 		EnableNodePool:            true,

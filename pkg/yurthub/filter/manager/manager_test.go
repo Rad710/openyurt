@@ -145,7 +145,7 @@ func TestFindResponseFilter(t *testing.T) {
 			stopper := make(chan struct{})
 			defer close(stopper)
 
-			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager)
+			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager, nil)
 
 			sharedFactory.Start(stopper)
 			nodePoolFactory.Start(stopper)
@@ -290,7 +290,7 @@ func TestFindObjectFilter(t *testing.T) {
 			stopper := make(chan struct{})
 			defer close(stopper)
 
-			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager)
+			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager, nil)
 
 			sharedFactory.Start(stopper)
 			nodePoolFactory.Start(stopper)
@@ -398,7 +398,7 @@ func TestHasSynced(t *testing.T) {
 				dynamicinformer.NewDynamicSharedInformerFactory(fakeDynamicClient, 24*time.Hour)
 			configManager := configuration.NewConfigurationManager(options.NodeName, sharedFactory)
 
-			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager)
+			finder, _ := NewFilterManager(options, sharedFactory, nodePoolFactory, fakeClient, serializerManager, configManager, nil)
 			hasSynced := finder.HasSynced()
 			if hasSynced != tc.hasSynced {
 				t.Errorf("expect synced result: %v, but got %v", tc.hasSynced, hasSynced)

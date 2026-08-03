@@ -34,6 +34,7 @@ import (
 	"github.com/openyurtio/openyurt/pkg/projectinfo"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/discardcloudservice"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/forwardkubesvctraffic"
+	"github.com/openyurtio/openyurt/pkg/yurthub/filter/livepodip"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/nodeportisolation"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/serviceenvupdater"
 	"github.com/openyurtio/openyurt/pkg/yurthub/filter/servicetopology"
@@ -67,7 +68,7 @@ func TestManager(t *testing.T) {
 				"kubelet/get/pods":               sets.New[string](serviceenvupdater.FilterName),
 				"kubelet/patch/pods":             sets.New[string](serviceenvupdater.FilterName),
 				"kube-proxy/list/endpoints":      sets.New[string](servicetopology.FilterName),
-				"kube-proxy/list/endpointslices": sets.New[string](servicetopology.FilterName, forwardkubesvctraffic.FilterName),
+				"kube-proxy/list/endpointslices": sets.New[string](servicetopology.FilterName, forwardkubesvctraffic.FilterName, livepodip.FilterName),
 				"foo/list/pods":                  sets.New[string](),
 			},
 		},
@@ -171,7 +172,7 @@ func TestManager(t *testing.T) {
 			},
 			deletedFilterSet: map[string]sets.Set[string]{
 				"kube-proxy/list/endpoints":      sets.New[string](servicetopology.FilterName),
-				"kube-proxy/list/endpointslices": sets.New[string](servicetopology.FilterName, forwardkubesvctraffic.FilterName),
+				"kube-proxy/list/endpointslices": sets.New[string](servicetopology.FilterName, forwardkubesvctraffic.FilterName, livepodip.FilterName),
 				"/list/endpoints":                sets.New[string](),
 				"/watch/endpointslices":          sets.New[string](),
 			},

@@ -134,6 +134,13 @@ func Run(ctx context.Context, cfg *config.YurtHubConfiguration) error {
 			if err != nil {
 				return fmt.Errorf("could not new health checker for cloud kube-apiserver, %w", err)
 			}
+			// Filters that implement initializer.WantsHealthChecker (so they can
+			// tell whether the cloud is reachable, per decisions/0002) cannot
+			// receive it through the normal filter.Initializer chain: cfg.FilterFinder
+			// was already built by config.Complete(), before this checker existed.
+			if err := cfg.FilterFinder.SetHealthChecker(cloudHealthChecker); err != nil {
+				return fmt.Errorf("could not attach cloud health checker to filters, %w", err)
+			}
 			trace++
 
 			klog.Infof("%d. new gc manager for node %s, and gc frequency is a random time between %d min and %d min", trace, cfg.NodeName, cfg.GCFrequency, 3*cfg.GCFrequency)
