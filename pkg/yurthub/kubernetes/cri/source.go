@@ -94,6 +94,14 @@ type Source interface {
 	// leaving one alone.
 	PodIP(ctx context.Context, namespace, name string) (ip string, found bool, err error)
 
+	// Refresh reads the runtime immediately, ignoring the cache TTL, and reports
+	// whether the set of pod addresses differs from what was previously
+	// observed. It exists so a caller can detect that already-served answers
+	// have become wrong: nothing else refreshes this source while no lookups are
+	// happening, which is exactly the situation after a disconnected reboot once
+	// clients have finished their initial LIST.
+	Refresh(ctx context.Context) (changed bool, err error)
+
 	// Close releases the underlying connection to the container runtime.
 	Close() error
 }
@@ -112,6 +120,32 @@ type source struct {
 	mu        sync.RWMutex
 	fetchedAt time.Time
 	byPod     map[PodIdentity]podEntry
+
+	// refreshFailing tracks whether the last refresh failed, so that losing (or
+	// regaining) the runtime is reported once at warning level instead of
+	// either spamming the log or being invisible.
+	//
+	// Invisible is what it was: these failures logged at V(4) while yurthub
+	// runs at --v=2 on an edge node (yurtadm constants.go, YURTHUB_EXTRA_ARGS).
+	// This code path only does anything while the cloud is unreachable, which
+	// is exactly when nobody is running with raised verbosity — so an
+	// unreachable containerd made the whole feature silently inert with no
+	// signal at all. Rate-limiting by transition rather than by interval
+	// matters too: the poller retries every few seconds for the length of an
+	// outage, and a site server should not fill its disk describing that.
+	refreshFailing bool
+
+	// changedSinceSignal latches "the address map moved" until a Refresh caller
+	// consumes it.
+	//
+	// It has to be a latch rather than a return value from refresh, because
+	// refresh is shared: the serve path (ensureFresh, on a 2s TTL) and the
+	// change detector (Refresh, on a slower poll) both drive it, and
+	// singleflight may collapse them into one call. Reporting "changed since
+	// this particular call" would let whichever path happened to run first
+	// swallow the signal — in practice the serve path, since it runs far more
+	// often — and the detector would then see nothing to act on.
+	changedSinceSignal bool
 }
 
 // NewSource dials the container runtime at endpoint (e.g.
@@ -174,6 +208,23 @@ func (s *source) PodIP(ctx context.Context, namespace, name string) (string, boo
 	return entry.ip, ok, nil
 }
 
+func (s *source) Refresh(_ context.Context) (bool, error) {
+	if err := s.doRefresh(); err != nil {
+		return false, err
+	}
+
+	// Consume the latch rather than asking "did THIS refresh change anything":
+	// the change may well have been observed by a serve-path refresh in
+	// between. Consuming here, and only here, means exactly one caller acts on
+	// each change — no missed signal, and no repeated invalidation of the same
+	// one.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := s.changedSinceSignal
+	s.changedSinceSignal = false
+	return changed, nil
+}
+
 func (s *source) ensureFresh(_ context.Context) error {
 	s.mu.RLock()
 	fresh := time.Since(s.fetchedAt) < s.ttl
@@ -181,10 +232,13 @@ func (s *source) ensureFresh(_ context.Context) error {
 	if fresh {
 		return nil
 	}
+	return s.doRefresh()
+}
 
-	// singleflight collapses every caller that finds the snapshot stale into
-	// one refresh, so a burst of lookups for every endpoint in one
-	// EndpointSlice LIST costs a single ListPodSandbox round trip.
+// doRefresh collapses concurrent refreshes into one. A burst of lookups for
+// every endpoint in a single EndpointSlice LIST therefore costs one
+// ListPodSandbox round trip, not one per endpoint.
+func (s *source) doRefresh() error {
 	_, err, _ := s.group.Do("refresh", func() (interface{}, error) {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
 		defer cancel()
@@ -193,11 +247,15 @@ func (s *source) ensureFresh(_ context.Context) error {
 	return err
 }
 
+// refresh re-reads every sandbox and, if the resulting identity->address map
+// differs from the previous one, latches that for the next Refresh caller.
 func (s *source) refresh(ctx context.Context) error {
 	resp, err := s.client.ListPodSandbox(ctx, &runtimeapi.ListPodSandboxRequest{})
 	if err != nil {
+		s.reportRefreshResult(err)
 		return fmt.Errorf("listing pod sandboxes: %w", err)
 	}
+	s.reportRefreshResult(nil)
 
 	next := make(map[PodIdentity]podEntry, len(resp.GetItems()))
 	for _, sb := range resp.GetItems() {
@@ -235,8 +293,51 @@ func (s *source) refresh(ctx context.Context) error {
 	}
 
 	s.mu.Lock()
+	// |= not =: an unchanged refresh must never clear a change an earlier one
+	// latched but nobody has consumed yet.
+	s.changedSinceSignal = s.changedSinceSignal || !sameAddresses(s.byPod, next)
 	s.byPod = next
 	s.fetchedAt = time.Now()
 	s.mu.Unlock()
 	return nil
+}
+
+// reportRefreshResult logs the runtime becoming unreachable, and later
+// reachable again, exactly once per transition. See source.refreshFailing.
+func (s *source) reportRefreshResult(err error) {
+	s.mu.Lock()
+	was := s.refreshFailing
+	s.refreshFailing = err != nil
+	s.mu.Unlock()
+
+	switch {
+	case err != nil && !was:
+		klog.Warningf("cri: cannot read pod addresses from the container runtime: %v. "+
+			"EndpointSlices will NOT be corrected while the cloud is unreachable.", err)
+	case err == nil && was:
+		klog.Infof("cri: container runtime is readable again, pod addresses will be corrected")
+	}
+}
+
+// isRefreshFailing reports whether the last refresh failed. For tests.
+func (s *source) isRefreshFailing() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.refreshFailing
+}
+
+// sameAddresses compares only identity->address, ignoring createdAt: a sandbox
+// being replaced by a newer one at the SAME address is not a change anyone
+// downstream needs to act on.
+func sameAddresses(a, b map[PodIdentity]podEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, ea := range a {
+		eb, ok := b[id]
+		if !ok || ea.ip != eb.ip {
+			return false
+		}
+	}
+	return true
 }

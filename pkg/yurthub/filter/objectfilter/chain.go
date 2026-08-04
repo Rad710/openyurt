@@ -18,6 +18,7 @@ package objectfilter
 
 import (
 	"strings"
+	"sync"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -56,4 +57,49 @@ func (chain filterChain) Filter(obj runtime.Object, stopCh <-chan struct{}) runt
 	}
 
 	return obj
+}
+
+// Invalidated implements filter.WatchInvalidator on behalf of any member that
+// implements it, so a chain does not swallow a member's invalidation signal.
+// The watch layer only ever sees the composed chain, so without this the signal
+// would never reach it.
+//
+// Returns a channel that closes when ANY implementing member's does. The common
+// case is exactly one implementer, which is handled without spawning anything.
+func (chain filterChain) Invalidated(stop <-chan struct{}) <-chan struct{} {
+	var sources []<-chan struct{}
+	for i := range chain {
+		if wi, ok := chain[i].(filter.WatchInvalidator); ok {
+			if ch := wi.Invalidated(stop); ch != nil {
+				sources = append(sources, ch)
+			}
+		}
+	}
+
+	switch len(sources) {
+	case 0:
+		// Never closed: no member can invalidate, so a watch waiting on this
+		// simply never fires. A nil channel would also block forever but reads
+		// as an accident.
+		return make(chan struct{})
+	case 1:
+		return sources[0]
+	}
+
+	// Fan-in. One goroutine, bounded by stop so it cannot outlive the caller
+	// even if no source ever fires.
+	out := make(chan struct{})
+	var once sync.Once
+	closeOut := func() { once.Do(func() { close(out) }) }
+	for i := range sources {
+		src := sources[i]
+		go func() {
+			select {
+			case <-src:
+				closeOut()
+			case <-stop:
+			}
+		}()
+	}
+	return out
 }

@@ -73,6 +73,33 @@ type FilterFinder interface {
 	SetHealthChecker(checker healthchecker.Interface) error
 }
 
+// WatchInvalidator is an optional interface an ObjectFilter may implement when
+// its output for a given input object can change over time *independently of
+// that object changing* — because it is derived from something outside the
+// apiserver, such as the node's container runtime.
+//
+// It exists because a serve-time filter is only applied when an object is
+// served. While the cloud is unreachable the multiplexer's cacher is fed from an
+// unchanging disk cache and emits no watch events, so a client that has finished
+// its initial LIST would otherwise keep a stale view indefinitely. Verified: a
+// clean watch close makes client-go re-establish a watch, NOT re-LIST — only an
+// error on the watch triggers a re-LIST (see
+// pkg/yurthub/multiplexer/reflector_contract_test.go).
+//
+// A filter implementing this is telling the watch layer "terminate open watches
+// so clients re-LIST and see my corrected output".
+type WatchInvalidator interface {
+	// Invalidated returns a channel that is closed when this filter's output for
+	// already-served objects may have changed. The returned channel is valid for
+	// one signal only; a caller wanting to observe further changes must call
+	// Invalidated again.
+	//
+	// stop bounds any bookkeeping the implementation does on the caller's behalf
+	// and must be closed by the caller when it stops caring. Implementations must
+	// never return nil.
+	Invalidated(stop <-chan struct{}) <-chan struct{}
+}
+
 type NodeGetter func(name string) (*v1.Node, error)
 
 // ResourceSyncer is used for verifying the resources which filter depends on has been synced or not.

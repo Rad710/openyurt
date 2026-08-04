@@ -54,10 +54,20 @@ type fakeRuntime struct {
 	// this ID exactly, simulating one sandbox's status being unavailable
 	// without affecting any other.
 	statusErrForID string
+
+	// listErr, if set, makes ListPodSandbox fail, simulating an unreachable
+	// container runtime.
+	listErr error
 }
 
 func (f *fakeRuntime) ListPodSandbox(_ context.Context, _ *runtimeapi.ListPodSandboxRequest) (*runtimeapi.ListPodSandboxResponse, error) {
 	f.listCalls.Add(1)
+	f.mu.Lock()
+	listErr := f.listErr
+	f.mu.Unlock()
+	if listErr != nil {
+		return nil, listErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	items := make([]*runtimeapi.PodSandbox, 0, len(f.sandboxes))
@@ -302,5 +312,179 @@ func TestPodIP_ConcurrentLookupsCollapseIntoOneRefresh(t *testing.T) {
 	}
 	if got := fr.listCalls.Load(); got != 1 {
 		t.Fatalf("ListPodSandbox called %d times across 50 concurrent callers, want exactly 1", got)
+	}
+}
+
+// --- change detection, which drives livepodip's watch invalidation ---
+
+// The serve path (ensureFresh, on the cache TTL) and the change detector
+// (Refresh, on a slower poll) share one refresh. If a serve-path refresh
+// observes the address change first, Refresh must STILL report it — otherwise
+// livepodip never invalidates open watches and consumers keep serving dead
+// addresses for the whole outage.
+func TestServePathDoesNotSwallowTheChangeSignal(t *testing.T) {
+	fr := &fakeRuntime{sandboxes: []fakeSandbox{
+		{id: "a", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 1, ip: "10.244.1.11"},
+	}}
+	s := newTestSource(t, fr, 10*time.Millisecond)
+	ctx := context.Background()
+
+	if _, _, err := s.PodIP(ctx, "default", "web-1"); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+	if _, err := s.Refresh(ctx); err != nil { // drain the initial-population latch
+		t.Fatalf("drain: %v", err)
+	}
+
+	// The pod is replaced at a new address, as after a disconnected reboot.
+	fr.mu.Lock()
+	fr.sandboxes = []fakeSandbox{
+		{id: "b", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 2, ip: "10.244.1.31"},
+	}
+	fr.mu.Unlock()
+
+	// A serve-path lookup gets there first.
+	time.Sleep(20 * time.Millisecond) // let the TTL lapse
+	ip, _, err := s.PodIP(ctx, "default", "web-1")
+	if err != nil {
+		t.Fatalf("serve lookup: %v", err)
+	}
+	if ip != "10.244.1.31" {
+		t.Fatalf("serve path saw %q, want 10.244.1.31", ip)
+	}
+
+	changed, err := s.Refresh(ctx)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if !changed {
+		t.Fatal("Refresh reported changed=false after a serve-path refresh consumed the change")
+	}
+}
+
+// Consuming is one-shot: a second Refresh with nothing new must report false,
+// or every poll would invalidate and clients would re-LIST in a hot loop.
+func TestRefreshConsumesTheChangeOnce(t *testing.T) {
+	fr := &fakeRuntime{sandboxes: []fakeSandbox{
+		{id: "a", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 1, ip: "10.244.1.11"},
+	}}
+	s := newTestSource(t, fr, time.Nanosecond)
+	ctx := context.Background()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	changed, err := s.Refresh(ctx)
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if changed {
+		t.Fatal("Refresh reported changed=true twice for one change — this is a re-LIST hot loop")
+	}
+}
+
+// Only addresses matter. A sandbox replaced by a newer one at the SAME address
+// is not something any consumer needs to re-LIST for.
+func TestRefreshIgnoresSandboxChurnAtTheSameAddress(t *testing.T) {
+	fr := &fakeRuntime{sandboxes: []fakeSandbox{
+		{id: "a", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 1, ip: "10.244.1.11"},
+	}}
+	s := newTestSource(t, fr, time.Nanosecond)
+	ctx := context.Background()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	fr.mu.Lock()
+	fr.sandboxes = []fakeSandbox{
+		{id: "b", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 99, ip: "10.244.1.11"},
+	}
+	fr.mu.Unlock()
+
+	changed, err := s.Refresh(ctx)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if changed {
+		t.Fatal("a new sandbox at the same address was reported as a change")
+	}
+}
+
+// A failed refresh must not clear a change nobody has consumed yet.
+func TestRefreshErrorDoesNotDropAPendingChange(t *testing.T) {
+	fr := &fakeRuntime{sandboxes: []fakeSandbox{
+		{id: "a", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 1, ip: "10.244.1.11"},
+	}}
+	s := newTestSource(t, fr, time.Nanosecond)
+	ctx := context.Background()
+
+	// Populate without consuming: the serve path latches the change.
+	if _, _, err := s.PodIP(ctx, "default", "web-1"); err != nil {
+		t.Fatalf("prime: %v", err)
+	}
+
+	// An unchanged refresh in between must leave the latch alone.
+	if _, _, err := s.PodIP(ctx, "default", "web-1"); err != nil {
+		t.Fatalf("second lookup: %v", err)
+	}
+
+	changed, err := s.Refresh(ctx)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if !changed {
+		t.Fatal("an intervening unchanged refresh cleared a pending change")
+	}
+}
+
+// An unreachable container runtime must be visible at default verbosity, and
+// must be reported once per transition rather than once per retry — the poller
+// retries for the length of an outage, on a node whose disk we care about.
+func TestRuntimeFailureIsReportedOncePerTransition(t *testing.T) {
+	fr := &fakeRuntime{sandboxes: []fakeSandbox{
+		{id: "a", namespace: "default", name: "web-1",
+			state: runtimeapi.PodSandboxState_SANDBOX_READY, createdAt: 1, ip: "10.244.1.11"},
+	}}
+	s := newTestSource(t, fr, time.Nanosecond).(*source)
+	ctx := context.Background()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatalf("healthy refresh: %v", err)
+	}
+	if s.isRefreshFailing() {
+		t.Fatal("a healthy refresh was recorded as failing")
+	}
+
+	// Break the runtime.
+	fr.mu.Lock()
+	fr.listErr = errors.New("connection refused")
+	fr.mu.Unlock()
+
+	for i := 0; i < 3; i++ {
+		if _, err := s.Refresh(ctx); err == nil {
+			t.Fatalf("refresh %d succeeded against a broken runtime", i)
+		}
+		if !s.isRefreshFailing() {
+			t.Fatalf("refresh %d did not record the runtime as failing", i)
+		}
+	}
+
+	// Recover it.
+	fr.mu.Lock()
+	fr.listErr = nil
+	fr.mu.Unlock()
+
+	if _, err := s.Refresh(ctx); err != nil {
+		t.Fatalf("refresh after recovery: %v", err)
+	}
+	if s.isRefreshFailing() {
+		t.Fatal("recovery was not recorded")
 	}
 }

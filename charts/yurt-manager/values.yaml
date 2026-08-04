@@ -38,7 +38,27 @@ nodeServant:
     tag: "latest"
 
 yurthub:
+  # Extra components (by user-agent) whose responses yurthub should cache, on top
+  # of its built-in defaults. Comma-separated.
   cacheAgents: ""
+
+  # Extra components (by user-agent) that should have their EndpointSlice
+  # addresses rewritten to the pod addresses actually live on the node, while the
+  # cloud is unreachable. Comma-separated.
+  #
+  # kube-proxy and coredns are built-in defaults of the livepodip filter and do
+  # NOT need listing here. An ingress controller does, because its user-agent is
+  # deployment-specific -- and it matters: after a disconnected reboot an ingress
+  # controller with stale addresses returns 502 for every route.
+  #
+  # Set this rather than patching the ConfigMap after install. A post-install
+  # patch can land AFTER the ingress controller has completed its first LIST, in
+  # which case that LIST is unfiltered and the controller keeps a stale view
+  # until its watch expires. Observed on hardware 2026-08-03: the patch was
+  # applied at 16:22:00 and the ingress controller had listed at 16:21:5x.
+  #
+  # Example: livePodIPAgents: "traefik"
+  livePodIPAgents: ""
 
 # support extra args of yurt-manager cmd
 extraArgs: []

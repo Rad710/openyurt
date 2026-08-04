@@ -38,6 +38,8 @@ package livepodip
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	discovery "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -54,6 +56,16 @@ import (
 // addresses currently live on this node, while the cloud is unreachable.
 const FilterName = "livepodip"
 
+// DefaultPollInterval is how often the container runtime is re-read while the
+// cloud is unreachable, to notice that pod addresses have changed and that
+// already-served EndpointSlices are therefore wrong.
+//
+// Nothing else refreshes the pod-IP source once clients have finished their
+// initial LIST, which is precisely the state after a disconnected reboot. This
+// bounds how long a client can hold a stale view; convergence follows within
+// roughly this interval plus the client's re-LIST.
+const DefaultPollInterval = 5 * time.Second
+
 // Register registers a filter
 func Register(filters *base.Filters) {
 	filters.Register(FilterName, func() (filter.ObjectFilter, error) {
@@ -62,7 +74,10 @@ func Register(filters *base.Filters) {
 }
 
 func NewLivePodIPFilter() (*livePodIPFilter, error) {
-	return &livePodIPFilter{}, nil
+	return &livePodIPFilter{
+		invalidated:  make(chan struct{}),
+		pollInterval: DefaultPollInterval,
+	}, nil
 }
 
 type livePodIPFilter struct {
@@ -74,6 +89,127 @@ type livePodIPFilter struct {
 	podIPs     cri.Source
 	nodeName   string
 	warnedNoIP bool
+
+	pollInterval time.Duration
+
+	// The poller's lifetime is tied to the SET of open watches, not to any one
+	// of them. This filter is a process-lifetime singleton — the filter manager
+	// builds one instance and hands it to every request (filter/manager:
+	// NewFromFilters is called once) — whereas each filterWatch passes its own
+	// stop channel. Binding the poller to whichever watch happened to call
+	// first would let that watch ending kill invalidation for every watch after
+	// it, silently, which is the failure shape this whole feature exists to
+	// remove.
+	pollMu       sync.Mutex
+	pollWatchers int
+	pollStop     chan struct{}
+
+	// invalidated is closed-and-replaced to broadcast. A single buffered channel
+	// would wake only ONE waiter, and there is one waiter per open watch
+	// (kube-proxy, coredns, the ingress controller...) — every one of them needs
+	// to be told, or the ones that miss out keep serving stale addresses.
+	invalidatedMu sync.Mutex
+	invalidated   chan struct{}
+}
+
+// Invalidated implements filter.WatchInvalidator.
+func (f *livePodIPFilter) Invalidated(stop <-chan struct{}) <-chan struct{} {
+	// Take the current channel BEFORE registering, so a broadcast racing with
+	// this call closes the channel we are about to hand back rather than the
+	// one that replaces it. Handing back the replacement would lose the signal
+	// for this watch entirely.
+	f.invalidatedMu.Lock()
+	ch := f.invalidated
+	f.invalidatedMu.Unlock()
+
+	// Registering here rather than polling from construction means the runtime
+	// is only read on nodes where something actually watches EndpointSlices.
+	f.addWatcher(stop)
+	return ch
+}
+
+func (f *livePodIPFilter) broadcastInvalidated() {
+	f.invalidatedMu.Lock()
+	defer f.invalidatedMu.Unlock()
+	close(f.invalidated)
+	f.invalidated = make(chan struct{})
+}
+
+// addWatcher records one open watch and starts the poller if it is the first.
+func (f *livePodIPFilter) addWatcher(stop <-chan struct{}) {
+	if f.podIPs == nil || f.checker == nil {
+		return // inactive: nothing to detect, so nothing to poll for
+	}
+
+	f.pollMu.Lock()
+	f.pollWatchers++
+	if f.pollWatchers == 1 {
+		f.pollStop = make(chan struct{})
+		go f.pollForAddressChanges(f.pollStop)
+	}
+	f.pollMu.Unlock()
+
+	if stop == nil {
+		// No way to learn when this watch ends, so never release it. That
+		// leaves the poller running, which is the safe direction: over-polling
+		// costs a ListPodSandbox every interval, whereas under-polling means
+		// consumers keep serving dead addresses through an outage.
+		return
+	}
+
+	// Exits as soon as this watch ends; bounded by the watch, not by the filter.
+	go func() {
+		<-stop
+		f.removeWatcher()
+	}()
+}
+
+// removeWatcher drops one open watch and stops the poller once none are left.
+func (f *livePodIPFilter) removeWatcher() {
+	f.pollMu.Lock()
+	defer f.pollMu.Unlock()
+	if f.pollWatchers == 0 {
+		return // defensive: never let an extra release stop a live poller
+	}
+	f.pollWatchers--
+	if f.pollWatchers == 0 && f.pollStop != nil {
+		close(f.pollStop)
+		f.pollStop = nil
+	}
+}
+
+// pollForAddressChanges notices that the addresses this filter serves have
+// changed and tells open watches, so their clients re-LIST and receive the
+// corrected objects.
+func (f *livePodIPFilter) pollForAddressChanges(stop <-chan struct{}) {
+	ticker := time.NewTicker(f.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+		}
+
+		// Only while disconnected. While the cloud is reachable the real
+		// endpoint controller is authoritative, this filter does not rewrite
+		// anything, and terminating watches would be pure churn.
+		if f.checker.IsHealthy() {
+			continue
+		}
+
+		changed, err := f.podIPs.Refresh(context.Background())
+		if err != nil {
+			klog.V(4).Infof("%s filter: could not refresh pod addresses: %v", FilterName, err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		klog.V(2).Infof("%s filter: pod addresses changed while disconnected, invalidating open watches so clients re-list", FilterName)
+		f.broadcastInvalidated()
+	}
 }
 
 func (f *livePodIPFilter) Name() string {

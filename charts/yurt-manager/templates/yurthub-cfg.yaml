@@ -114,3 +114,7 @@ data:
   servicetopology: ""
   discardcloudservice: ""
   masterservice: ""
+  # Components bound to the livepodip filter, in addition to its built-in
+  # defaults (kube-proxy, coredns). Shipped with the chart rather than patched in
+  # afterwards so the binding cannot land after a consumer's first LIST.
+  livepodip: {{ .Values.yurthub.livePodIPAgents | quote }}
