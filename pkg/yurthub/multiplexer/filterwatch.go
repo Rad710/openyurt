@@ -36,6 +36,10 @@ type filterWatch struct {
 	result chan watch.Event
 	done   chan struct{}
 
+	// component is the requesting client's user-agent, used only in log lines.
+	// May be empty.
+	component string
+
 	// Stop has two callers per watch — receive()'s deferred Stop, and the
 	// apiserver serving goroutine's deferred watcher.Stop in
 	// handlers.ListResource — so it must be safe to call concurrently. The
@@ -56,16 +60,17 @@ func (f *filterWatch) Stop() {
 	})
 }
 
-func newFilterWatch(source watch.Interface, filter filter.ObjectFilter) watch.Interface {
+func newFilterWatch(source watch.Interface, filter filter.ObjectFilter, component string) watch.Interface {
 	if filter == nil {
 		return source
 	}
 
 	fw := &filterWatch{
-		source: source,
-		filter: filter,
-		result: make(chan watch.Event),
-		done:   make(chan struct{}),
+		source:    source,
+		filter:    filter,
+		component: component,
+		result:    make(chan watch.Event),
+		done:      make(chan struct{}),
 	}
 
 	go fw.receive()
@@ -139,7 +144,12 @@ func (f *filterWatch) receive() {
 // turns this into an error from its watch handler, which makes the reflector
 // return from ListAndWatch and perform a fresh LIST.
 func (f *filterWatch) sendExpired() {
-	klog.V(2).Infof("filter %s invalidated its output, ending watch with 410 so the client re-lists", f.filter.Name())
+	component := f.component
+	if component == "" {
+		component = "<unknown component>"
+	}
+	klog.V(2).Infof("filter %s invalidated its output, ending %s's watch with 410 so it re-lists",
+		f.filter.Name(), component)
 	select {
 	case <-f.done:
 	case f.result <- watch.Event{

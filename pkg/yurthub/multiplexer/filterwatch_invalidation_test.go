@@ -65,7 +65,7 @@ func TestFilterWatchEmits410OnInvalidation(t *testing.T) {
 	inv := make(chan struct{})
 	f := &invalidatingFilter{&passthroughFilter{name: "test", invalidated: inv}}
 
-	w := newFilterWatch(source, f)
+	w := newFilterWatch(source, f, "kube-proxy")
 	defer w.Stop()
 
 	close(inv)
@@ -105,7 +105,7 @@ func TestFilterWatchClosesAfterInvalidation(t *testing.T) {
 	inv := make(chan struct{})
 	f := &invalidatingFilter{&passthroughFilter{name: "test", invalidated: inv}}
 
-	w := newFilterWatch(source, f)
+	w := newFilterWatch(source, f, "kube-proxy")
 	defer w.Stop()
 
 	close(inv)
@@ -128,7 +128,7 @@ func TestFilterWatchStillForwardsEventsWhenNotInvalidated(t *testing.T) {
 	source := watch.NewFake()
 	f := &invalidatingFilter{&passthroughFilter{name: "test", invalidated: make(chan struct{})}}
 
-	w := newFilterWatch(source, f)
+	w := newFilterWatch(source, f, "kube-proxy")
 	defer w.Stop()
 
 	go source.Add(&discovery.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: "default"}})
@@ -147,7 +147,7 @@ func TestFilterWatchStillForwardsEventsWhenNotInvalidated(t *testing.T) {
 // before — most filters in the tree do not.
 func TestFilterWatchUnaffectedByNonInvalidatingFilter(t *testing.T) {
 	source := watch.NewFake()
-	w := newFilterWatch(source, &passthroughFilter{name: "plain"})
+	w := newFilterWatch(source, &passthroughFilter{name: "plain"}, "kube-proxy")
 	defer w.Stop()
 
 	go source.Add(&discovery.EndpointSlice{ObjectMeta: metav1.ObjectMeta{Name: "es", Namespace: "default"}})
@@ -171,7 +171,7 @@ func TestFilterWatchReleasesTheFilterOnStop(t *testing.T) {
 		name: "test", invalidated: make(chan struct{}), gotStop: released,
 	}}
 
-	w := newFilterWatch(source, f)
+	w := newFilterWatch(source, f, "kube-proxy")
 	w.Stop()
 
 	select {

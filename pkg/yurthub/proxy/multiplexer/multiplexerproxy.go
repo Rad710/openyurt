@@ -25,6 +25,8 @@ import (
 	"github.com/pkg/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	metainternalversion "k8s.io/apimachinery/pkg/apis/meta/internalversion"
+	metainternalversionscheme "k8s.io/apimachinery/pkg/apis/meta/internalversion/scheme"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -33,6 +35,7 @@ import (
 	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/klog/v2"
 	v1 "k8s.io/kubernetes/pkg/apis/core/v1"
 
 	hubmeta "github.com/openyurtio/openyurt/pkg/yurthub/kubernetes/meta"
@@ -78,6 +81,11 @@ func (sp *multiplexerProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := rejectWatchList(r); err != nil {
+		util.Err(err, w, r)
+		return
+	}
+
 	restStore, err := sp.requestsMultiplexerManager.ResourceStore(gvr)
 	if err != nil {
 		util.Err(errors.Wrapf(err, "failed to get rest storage"), w, r)
@@ -92,6 +100,38 @@ func (sp *multiplexerProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	watcher := restStore.(rest.Watcher)
 	forceWatch := reqInfo.Verb == "watch"
 	handlers.ListResource(lister, watcher, reqScope, forceWatch, minRequestTimeout).ServeHTTP(w, r)
+}
+
+// rejectWatchList turns away a WatchList (sendInitialEvents=true) request for
+// pool-scope metadata, so the client falls back to LIST+WATCH.
+//
+// The equivalent already existed for the local disk-replay path
+// (pkg/yurthub/proxy/local/local.go), but pool-scope resources — EndpointSlices
+// among them — never touch that path, so it did not apply where it matters most.
+// Measured on hardware 2026-08-04: 32 WatchList requests reached the multiplexer
+// and every one was answered 200 in under a millisecond having delivered nothing
+// at all, while 464 were correctly rejected on the local path.
+//
+// Answering 200 with no initial events and no "k8s.io/initial-events-end"
+// bookmark is worse than an error. A client that treats it as a successful sync
+// concludes the resource is empty; client-go itself falls back, but only because
+// it checks for the missing bookmark, and any consumer that acts on "informer
+// synced" before that check sees an empty world. An explicit error removes the
+// ambiguity: client-go treats anything that is not a 429 or a connection refusal
+// as a signal to use LIST+WATCH, which this proxy serves correctly and which is
+// the path serve-time filters are applied on.
+func rejectWatchList(r *http.Request) error {
+	opts := metainternalversion.ListOptions{}
+	if err := metainternalversionscheme.ParameterCodec.DecodeParameters(
+		r.URL.Query(), metav1.SchemeGroupVersion, &opts); err != nil {
+		return apierrors.NewBadRequest(err.Error())
+	}
+	if opts.SendInitialEvents == nil || !*opts.SendInitialEvents {
+		return nil
+	}
+
+	klog.V(2).Infof("rejecting watchlist request for pool scope metadata %s, so the client falls back to list+watch", util.ReqString(r))
+	return apierrors.NewBadRequest("yurthub does not support sendInitialEvents(WatchList) for pool scope metadata, use list+watch instead")
 }
 
 func (sp *multiplexerProxy) getReqScope(gvr *schema.GroupVersionResource) (*handlers.RequestScope, error) {

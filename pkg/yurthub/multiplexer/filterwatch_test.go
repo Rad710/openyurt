@@ -31,7 +31,7 @@ func TestFilterWatch_ResultChan(t *testing.T) {
 	t.Run("test filter endpointslices", func(t *testing.T) {
 		source := watch.NewFake()
 		filter := &ctesting.IgnoreEndpointslicesWithNodeName{IgnoreNodeName: "node1"}
-		fw := newFilterWatch(source, filter)
+		fw := newFilterWatch(source, filter, "")
 
 		go func() {
 			source.Add(mockEndpointslices())
@@ -44,7 +44,7 @@ func TestFilterWatch_ResultChan(t *testing.T) {
 		source := watch.NewFake()
 		filter := &ctesting.IgnoreEndpointslicesWithNodeName{IgnoreNodeName: "node1"}
 
-		fw := newFilterWatch(source, filter)
+		fw := newFilterWatch(source, filter, "")
 
 		go func() {
 			source.Add(mockCacheableObject())
@@ -100,7 +100,7 @@ func mockCacheableObject() *ctesting.MockCacheableObject {
 func TestFilterWatch_Stop(t *testing.T) {
 	source := watch.NewFake()
 	filter := &ctesting.IgnoreEndpointslicesWithNodeName{IgnoreNodeName: "node1"}
-	fw := newFilterWatch(source, filter)
+	fw := newFilterWatch(source, filter, "")
 
 	fw.Stop()
 
