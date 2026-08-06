@@ -123,9 +123,6 @@ func newFilter(t *testing.T, src cri.Source, checker healthchecker.Interface) *l
 	if err := f.SetHealthChecker(checker); err != nil {
 		t.Fatalf("SetHealthChecker: %v", err)
 	}
-	if err := f.SetNodeName(nodeName); err != nil {
-		t.Fatalf("SetNodeName: %v", err)
-	}
 	return f
 }
 

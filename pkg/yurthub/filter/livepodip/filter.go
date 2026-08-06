@@ -85,10 +85,13 @@ type livePodIPFilter struct {
 	// non-edge working mode has no health checker, and a node whose container
 	// runtime endpoint could not be parsed has no pod-IP source. Either being
 	// nil disables rewriting entirely — see Filter.
-	checker    healthchecker.Interface
-	podIPs     cri.Source
-	nodeName   string
-	warnedNoIP bool
+	checker healthchecker.Interface
+	podIPs  cri.Source
+
+	// Filter runs concurrently on this process-lifetime singleton, so the
+	// "registered but inactive" warning needs synchronising rather than a bare
+	// bool.
+	warnNoIPOnce sync.Once
 
 	pollInterval time.Duration
 
@@ -231,14 +234,10 @@ func (f *livePodIPFilter) SetPodIPSource(source cri.Source) error {
 	return nil
 }
 
-// SetNodeName implements initializer.WantsNodeName. Used only for logging —
-// the pod-IP source is inherently node-local, so endpoints targeting pods on
-// other nodes resolve to "no answer" and are left alone without needing to
-// compare node names.
-func (f *livePodIPFilter) SetNodeName(nodeName string) error {
-	f.nodeName = nodeName
-	return nil
-}
+// This filter deliberately does not implement initializer.WantsNodeName: the
+// pod-IP source is inherently node-local, so an endpoint targeting a pod on
+// another node resolves to "no answer" and is left alone without comparing node
+// names.
 
 func (f *livePodIPFilter) Filter(obj runtime.Object, stopCh <-chan struct{}) runtime.Object {
 	switch v := obj.(type) {
@@ -255,11 +254,10 @@ func (f *livePodIPFilter) rewriteAddresses(eps *discovery.EndpointSlice) *discov
 	// authoritative; the lab has already confirmed a clean reconnect over
 	// hand-patched cache state and that path must not be broken.
 	if f.podIPs == nil || f.checker == nil {
-		if !f.warnedNoIP {
+		f.warnNoIPOnce.Do(func() {
 			klog.Warningf("%s filter is registered but inactive: podIPSource=%v healthChecker=%v",
 				FilterName, f.podIPs != nil, f.checker != nil)
-			f.warnedNoIP = true
-		}
+		})
 		return eps
 	}
 	if f.checker.IsHealthy() {
