@@ -11,7 +11,10 @@ RUN CGO_ENABLED=0 \
     make build WHAT="cmd/yurt-node-servant cmd/yurthub"
 
 
-FROM --platform=${TARGETPLATFORM} alpine:3.17
+# alpine:3.17 reached end of life in November 2024 and receives no further
+# security updates, so images built from it ship unpatched base packages. 3.22
+# is a supported release and provides every package these images install.
+FROM --platform=${TARGETPLATFORM} alpine:3.22
 ARG TARGETOS TARGETARCH MIRROR_REPO
 RUN if [ ! -z "${MIRROR_REPO+x}" ]; then sed -i "s/dl-cdn.alpinelinux.org/${MIRROR_REPO}/g" /etc/apk/repositories; fi && \
     apk add ca-certificates bash libc6-compat && update-ca-certificates && rm /var/cache/apk/*
