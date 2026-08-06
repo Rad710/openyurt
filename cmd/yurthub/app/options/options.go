@@ -229,7 +229,7 @@ func (o *YurtHubOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.DiskCachePath, "disk-cache-path", o.DiskCachePath, "the path for kubernetes to storage metadata")
 	fs.BoolVar(&o.EnableResourceFilter, "enable-resource-filter", o.EnableResourceFilter, "enable to filter response that comes back from reverse proxy")
 	fs.StringSliceVar(&o.DisabledResourceFilters, "disabled-resource-filters", o.DisabledResourceFilters, "disable resource filters to handle response")
-	fs.StringVar(&o.CRIRuntimeEndpoint, "cri-runtime-endpoint", o.CRIRuntimeEndpoint, "the endpoint of the container runtime service, used to read the addresses pods currently have on this node so EndpointSlices can be served with live addresses while the cloud is unreachable")
+	fs.StringVar(&o.CRIRuntimeEndpoint, "container-runtime-endpoint", o.CRIRuntimeEndpoint, "the endpoint of the container runtime service, used to read the addresses pods currently have on this node so EndpointSlices can be served with live addresses while the cloud is unreachable")
 	fs.StringVar(&o.NodePoolName, "nodepool-name", o.NodePoolName, "the name of node pool that runs hub agent")
 	fs.StringVar(&o.WorkingMode, "working-mode", o.WorkingMode, "the working mode of yurthub(edge, cloud, local).")
 	fs.DurationVar(&o.KubeletHealthGracePeriod, "kubelet-health-grace-period", o.KubeletHealthGracePeriod, "the amount of time which we allow kubelet to be unresponsive before stop renew node lease")
