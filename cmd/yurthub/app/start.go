@@ -47,6 +47,14 @@ import (
 	"github.com/openyurtio/openyurt/pkg/yurthub/util"
 )
 
+// healthCheckerSetter is the optional capability of a filter.FilterFinder whose
+// filters can be told about cloud connectivity after they were constructed. It is
+// asserted for rather than being part of filter.FilterFinder itself, so that an
+// implementation with no such filters is not forced to carry a stub.
+type healthCheckerSetter interface {
+	SetHealthChecker(checker healthchecker.Interface) error
+}
+
 // NewCmdStartYurtHub creates a *cobra.Command object with default parameters
 func NewCmdStartYurtHub(ctx context.Context) *cobra.Command {
 	yurtHubOptions := options.NewYurtHubOptions()
@@ -135,11 +143,15 @@ func Run(ctx context.Context, cfg *config.YurtHubConfiguration) error {
 				return fmt.Errorf("could not new health checker for cloud kube-apiserver, %w", err)
 			}
 			// Filters that implement initializer.WantsHealthChecker (so they can
-			// tell whether the cloud is reachable, per decisions/0002) cannot
-			// receive it through the normal filter.Initializer chain: cfg.FilterFinder
-			// was already built by config.Complete(), before this checker existed.
-			if err := cfg.FilterFinder.SetHealthChecker(cloudHealthChecker); err != nil {
-				return fmt.Errorf("could not attach cloud health checker to filters, %w", err)
+			// tell whether the cloud is reachable) cannot receive it through the
+			// normal filter.Initializer chain: cfg.FilterFinder was already built
+			// by config.Complete(), before this checker existed. Asked for as an
+			// optional capability rather than as part of filter.FilterFinder, so
+			// that an implementation which has no such filters needs no stub.
+			if setter, ok := cfg.FilterFinder.(healthCheckerSetter); ok {
+				if err := setter.SetHealthChecker(cloudHealthChecker); err != nil {
+					return fmt.Errorf("could not attach cloud health checker to filters, %w", err)
+				}
 			}
 			trace++
 
