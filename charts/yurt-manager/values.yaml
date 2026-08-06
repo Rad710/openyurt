@@ -54,8 +54,7 @@ yurthub:
   # Set this rather than patching the ConfigMap after install. A post-install
   # patch can land AFTER the ingress controller has completed its first LIST, in
   # which case that LIST is unfiltered and the controller keeps a stale view
-  # until its watch expires. Observed on hardware 2026-08-03: the patch was
-  # applied at 16:22:00 and the ingress controller had listed at 16:21:5x.
+  # until its watch expires -- an ordering race that is easy to lose by seconds.
   #
   # Example: livePodIPAgents: "traefik"
   livePodIPAgents: ""

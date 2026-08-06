@@ -125,7 +125,7 @@ func (fs *filterStore) Watch(ctx context.Context, options *metainternalversion.L
 	// The component is carried purely so the watch can name it when it ends
 	// itself with a 410. Which consumer was told to re-list is the first thing
 	// anyone asks when a node does not converge after a disconnected reboot,
-	// and it was not answerable from the logs during the 2026-08-04 drill.
+	// and without this the logs cannot answer it.
 	component, _ := util.ClientComponentFrom(ctx)
 	return newFilterWatch(result, filters, component), nil
 }

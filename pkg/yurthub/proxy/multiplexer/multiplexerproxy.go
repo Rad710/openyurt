@@ -108,9 +108,8 @@ func (sp *multiplexerProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // The equivalent already existed for the local disk-replay path
 // (pkg/yurthub/proxy/local/local.go), but pool-scope resources — EndpointSlices
 // among them — never touch that path, so it did not apply where it matters most.
-// Measured on hardware 2026-08-04: 32 WatchList requests reached the multiplexer
-// and every one was answered 200 in under a millisecond having delivered nothing
-// at all, while 464 were correctly rejected on the local path.
+// Without this, such a request is answered 200 in under a millisecond having
+// delivered no event and no bookmark.
 //
 // Answering 200 with no initial events and no "k8s.io/initial-events-end"
 // bookmark is worse than an error. A client that treats it as a successful sync
