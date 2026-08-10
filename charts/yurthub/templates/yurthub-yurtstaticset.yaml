@@ -46,6 +46,9 @@ spec:
             {{- if .nodePoolName }}
             - --nodepool-name={{ .Values.nodePoolName }}
             {{- end }}
+            {{- if ne (toString .Values.multiplexerPort) "" }}
+            - --multiplexer-port={{ .Values.multiplexerPort }}
+            {{- end }}
           livenessProbe:
             httpGet:
               host: {{ .Values.yurthubBindingAddr }}

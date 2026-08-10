@@ -12,6 +12,13 @@ bootstrapFile: "/var/lib/yurthub/bootstrap-hub.conf"
 organizations: ""
 nodePoolName: ""
 
+# multiplexerPort overrides yurthub's --multiplexer-port. Leave "" to keep the
+# upstream default (10269). Set to 0 to disable the multiplexer listener entirely
+# — the only yurthub listener on a routable address, which otherwise serves the
+# full proxy unauthenticated (see docs/edge-autonomy tasks 0011/0015). Safe to
+# set 0 on single-node pools with no leader hub.
+multiplexerPort: ""
+
 image:
   registry: openyurt
   repository: yurthub
